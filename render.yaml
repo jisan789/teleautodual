@@ -1,11 +1,21 @@
 services:
   - type: web
-    name: loop-bot
+    name: telegram-broadcast-service
     env: python
+    plan: free # Change to starter ($7/mo) if you prefer zero sleep without keep-alive
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false   # Set this manually in Render dashboard
-      - key: TELEGRAM_CHAT_ID
-        sync: false   # Set this manually in Render dashboard
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: "utf-8"
+      - key: CONFIG_URL
+        value: "https://cdn.jisanfx.top/teleauto/config.json"
+      # Optional: set these in the Render Dashboard if you prefer not to keep them in code
+      # - key: TELEGRAM_API_ID
+      #   sync: false
+      # - key: TELEGRAM_API_HASH
+      #   sync: false
+      # - key: TELEGRAM_SESSION
+      #   sync: false
