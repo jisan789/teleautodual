@@ -82,6 +82,16 @@ SHARED_CONFIG = {
     "last_sync": 0.0,
 }
 
+# ─────────────────────────────────────────────────────────────────────
+# 3. Cross-Account Anti-Overlap Gap (Minimum 2 Minutes Per Group)
+# Ensures Account 1 and Account 2 never post to the same group within
+# MIN_CROSS_ACCOUNT_GAP_SECONDS (2 minutes) of each other.
+# ─────────────────────────────────────────────────────────────────────
+MIN_CROSS_ACCOUNT_GAP_SECONDS = int(os.environ.get("MIN_CROSS_ACCOUNT_GAP_SECONDS", 120))  # 2 minutes gap
+SHARED_GROUP_LAST_SENT: dict[int, tuple[str, float]] = {}  # { gid: (account_name, timestamp) }
+SHARED_GROUP_SENDING: set[int] = set()  # { gid currently in flight }
+GROUP_COOLDOWN_LOCK = threading.Lock()
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Remote Configuration Loader & Parser
@@ -550,18 +560,49 @@ class TelegramAccountWorker:
             ready_groups = [d for d in target if now >= next_eligible_time.get(d.id, 0.0)]
 
             if ready_groups:
-                for d in ready_groups:
+                # Randomize candidate group order slightly so accounts don't step on identical sequence
+                shuffled_groups = list(ready_groups)
+                random.shuffle(shuffled_groups)
+
+                for d in shuffled_groups:
                     gid = d.id
                     name = safe(d.name)
                     was_large_hold = is_large_hold.get(gid, False)
 
+                    # ── Check Cross-Account Anti-Overlap Gap (Minimum 2 Minutes per group) ──
+                    with GROUP_COOLDOWN_LOCK:
+                        last_poster, last_time = SHARED_GROUP_LAST_SENT.get(gid, (None, 0.0))
+                        time_since_last = time.time() - last_time
+
+                        if gid in SHARED_GROUP_SENDING:
+                            # Another account is actively transmitting to this group right now
+                            next_eligible_time[gid] = time.time() + 30.0
+                            continue
+
+                        if last_poster and last_poster != self.name and (time_since_last < MIN_CROSS_ACCOUNT_GAP_SECONDS):
+                            gap_needed = MIN_CROSS_ACCOUNT_GAP_SECONDS - time_since_last
+                            next_eligible_time[gid] = time.time() + gap_needed
+                            gap_t = time.strftime('%H:%M:%S', time.localtime(next_eligible_time[gid]))
+                            self.log(f"  [GAP]  {name} was posted to by {last_poster} {int(time_since_last)}s ago. Pausing {format_duration(gap_needed)} (next at {gap_t}) to maintain 2m gap.")
+                            continue
+
+                        # Mark group in-flight so the other account doesn't send simultaneously
+                        SHARED_GROUP_SENDING.add(gid)
+
                     chosen_min = random.uniform(min_min, max_min)
                     normal_interval_sec = chosen_min * 60
 
-                    status, wait_seconds = self.send_and_manage(client, d, message, limit)
-                    send_time = time.time()
+                    try:
+                        status, wait_seconds = self.send_and_manage(client, d, message, limit)
+                        send_time = time.time()
+                    finally:
+                        with GROUP_COOLDOWN_LOCK:
+                            SHARED_GROUP_SENDING.discard(gid)
 
                     if status == "OK":
+                        with GROUP_COOLDOWN_LOCK:
+                            SHARED_GROUP_LAST_SENT[gid] = (self.name, send_time)
+
                         send_count[gid] += 1
                         self.status["total_sent"] += 1
                         self.status["last_sent_time"] = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
@@ -623,6 +664,11 @@ class TelegramAccountWorker:
         asyncio.set_event_loop(loop)
 
         self.log("Worker thread initialized.")
+
+        # Stagger Account 2 start by 20s to offset initial burst across groups
+        if "2" in self.acc_id:
+            self.log("Staggering startup by 20s to ensure a clean 2m gap from Account 1...")
+            time.sleep(20)
 
         while True:
             try:
