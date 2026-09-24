@@ -58,7 +58,7 @@ ACCOUNT_CREDENTIALS = {
 # Broadcast parameters (message, limit, interval, rounds, target groups)
 # are pulled from this URL.
 # ─────────────────────────────────────────────────────────────────────
-CONFIG_URL = os.environ.get("CONFIG_URL", "https://cdn.jisanfx.top/teleauto/dualconfig,json")
+CONFIG_URL = os.environ.get("CONFIG_URL", "https://cdn.jisanfx.top/teleauto/dualconfig.json")
 CONFIG_REFRESH_SECONDS = 30 * 60  # Synchronize with remote URL every 30 minutes
 
 # Shared telemetry dictionary accessible by HTTP server and dashboard

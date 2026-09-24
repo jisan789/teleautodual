@@ -11,7 +11,7 @@ services:
       - key: PYTHONIOENCODING
         value: "utf-8"
       - key: CONFIG_URL
-        value: "https://cdn.jisanfx.top/teleauto/dualconfig,json"
+        value: "https://cdn.jisanfx.top/teleauto/dualconfig.json"
       # Account 1 Credentials (optional overrides if not in code)
       # - key: TELEGRAM_API_ID_1
       #   sync: false
