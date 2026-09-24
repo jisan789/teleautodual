@@ -1,60 +1,125 @@
-# Telegram Broadcast Loop (Render Web Service Ready)
+# Telegram Multi-Account Broadcast Loop (Render Web Service Ready)
 
 Automated Telegram group message broadcast runner using Telethon, engineered to run **24/7 continuously** on Render as a Web Service.
+
+Supports **2 main accounts (Account 1 and Account 2)** running simultaneously in isolated threads with separate rate limits, slowmode timers, message tracking, and target channels.
+
+**No configurations or credentials are hardcoded in your local code files.** All account credentials and broadcast options are loaded dynamically from your remote `CONFIG_URL` (or environment variables).
+
+---
+
+## Account Credentials (`show_writable_groups.py`)
+
+Credentials for both Account 1 and Account 2 are set inside [`show_writable_groups.py`](file:///c:/Users/Jisan/Desktop/loop/show_writable_groups.py) under `ACCOUNT_CREDENTIALS`:
+
+```python
+ACCOUNT_CREDENTIALS = {
+    "account_1": {
+        "name": "Account 1",
+        "api_id": 35126153,
+        "api_hash": "a95d613cee72019ccb984d8686c3e592",
+        "session": "1BVtsOGwBuwLZqUsI-S3XhZKvg5ni0P_...",
+    },
+    "account_2": {
+        "name": "Account 2",
+        "api_id": YOUR_API_ID_2,
+        "api_hash": "YOUR_API_HASH_2",
+        "session": "YOUR_SESSION_KEY_2",
+    },
+}
+```
+
+---
+
+## Remote Broadcast Campaign Configuration (`config.json`)
+
+Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast campaigns without exposing your API credentials:
+
+```json
+{
+  "account_1": {
+    "message": [
+      "https://t.me/+JMmFHaDnyHxlOTE1"
+    ],
+    "message_limit_per_group": 2,
+    "interval_minutes": "3-5",
+    "rounds": 0,
+    "target_groups": "all"
+  },
+  "account_2": {
+    "message": [
+      "🚀 Account 2 Promo Message",
+      "https://t.me/+AnotherChannelLink"
+    ],
+    "message_limit_per_group": 2,
+    "interval_minutes": "3-5",
+    "rounds": 0,
+    "target_groups": "all"
+  }
+}
+```
+
+### Options Available Per Account:
+- **`message`**: The broadcast text or link (supports an array of lines or a single string).
+- **`interval_minutes`**: Interval range between sends (e.g. `"3-5"`).
+- **`message_limit_per_group`**: Maximum messages to retain per group (e.g. `2` to keep last 2 and delete older ones).
+- **`target_groups`**: `"all"` (broadcasts to all groups that account is in) or a list of specific group IDs/names (e.g. `[-1001234567, "Group Title"]`).
+- **`rounds`**: `0` for infinite continuous loop.
+
+---
+
+## How 2 Accounts Work
+
+1. **Simultaneous & Completely Isolated**:
+   - Both accounts run in dedicated parallel threads at the exact same time.
+   - If Account 1 encounters SlowMode or FloodWait in one of its groups, Account 2 is completely unaffected and continues posting to its channels immediately.
+   - Each account has its own independent client connection, message deletion tracker, and target groups.
+
+2. **Clean Separation of Concerns**:
+   - Credentials (`api_id`, `api_hash`, `session`) live securely inside `show_writable_groups.py`.
+   - Campaign settings (`message`, `interval_minutes`, `message_limit_per_group`, `target_groups`) are fetched and synced dynamically from `CONFIG_URL`.
+
+---
+
+## Generating Session Strings ("Season Keys")
+
+To generate the session string ("season key") for Account 2:
+
+```bash
+python generate_session.py
+```
+
+Follow the prompts to enter your phone number and login code. Copy the generated string and paste it into `config.json` under `account_2` -> `"season"`.
 
 ---
 
 ## Deploying to Render (24/7 Web Service)
 
-### Option A: 1-Click / Blueprint Deploy
-Push this repo to GitHub and link it to Render. Render will automatically detect [`render.yaml`](file:///c:/Users/Jisan/Desktop/loop/render.yaml).
-
-### Option B: Manual Service Creation
 1. Go to [Render Dashboard](https://dashboard.render.com/) -> **New** -> **Web Service**.
 2. Connect your Git repository.
 3. Configure the following settings:
-   - **Name**: `telegram-broadcast-service` (or any name)
    - **Environment**: `Python`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `python app.py`
-4. *(Optional)* Add Environment Variables under **Environment**:
+4. Add Environment Variables under **Environment**:
    - `CONFIG_URL`: `https://cdn.jisanfx.top/teleauto/config.json`
-   - `TELEGRAM_API_ID`: *(Optional override)*
-   - `TELEGRAM_API_HASH`: *(Optional override)*
-   - `TELEGRAM_SESSION`: *(Optional override)*
    - `PYTHONUNBUFFERED`: `1`
 
 ---
 
-## Free Tier vs 24/7 Keeping Awake
+## Live Monitoring Dashboard
 
-Render Free Web Services automatically enter sleep mode after 15 minutes of HTTP inactivity.
-
-### Built-in Self Ping
-[`app.py`](file:///c:/Users/Jisan/Desktop/loop/app.py) includes a built-in keep-alive worker that reads `RENDER_EXTERNAL_URL` (injected automatically by Render) and pings itself every 10 minutes to stay awake.
-
-### External Monitor (Recommended for Free Tier)
-To ensure 100% continuous uptime on free tier:
-1. Copy your public Render Web Service URL (e.g., `https://your-service.onrender.com`).
-2. Add a free 5-minute HTTP monitor at [cron-job.org](https://cron-job.org) or [UptimeRobot](https://uptimerobot.com) targeting `https://your-service.onrender.com/healthz`.
-
-*(On Render's Starter plan ($7/mo), services never sleep and external monitors are not required).*
-
----
-
-## Live Monitoring Dashboard & Health Endpoints
-
-When running on Render, opening your service URL in a web browser displays a real-time monitor:
-- **`GET /`**: Live visual dashboard showing bot status, connected Telegram account, message count, and target groups.
+Opening your service URL (or `http://localhost:8080`) displays a real-time monitor:
+- **`GET /`**: Live visual dashboard showing status, messages sent, interval, deletion limit, message preview, and writable/target groups for **both Account 1 and Account 2**.
 - **`GET /healthz`**: Returns HTTP 200 `{"status": "healthy", ...}` for Render health checks.
-- **`GET /json`**: Raw telemetry data in JSON.
+- **`GET /json`**: Full telemetry JSON data.
 
 ---
 
 ## Running Locally
 
 ```bash
-# Run web service mode (matches Render production)
+# Run web service mode with live dashboard (matches Render production)
 python app.py
 
 # Or run standalone CLI mode

@@ -11,11 +11,18 @@ services:
       - key: PYTHONIOENCODING
         value: "utf-8"
       - key: CONFIG_URL
-        value: "https://cdn.jisanfx.top/teleauto/config.json"
-      # Optional: set these in the Render Dashboard if you prefer not to keep them in code
-      # - key: TELEGRAM_API_ID
+        value: "https://cdn.jisanfx.top/teleauto/dualconfig,json"
+      # Account 1 Credentials (optional overrides if not in code)
+      # - key: TELEGRAM_API_ID_1
       #   sync: false
-      # - key: TELEGRAM_API_HASH
+      # - key: TELEGRAM_API_HASH_1
       #   sync: false
-      # - key: TELEGRAM_SESSION
+      # - key: TELEGRAM_SESSION_1
+      #   sync: false
+      # Account 2 Credentials
+      # - key: TELEGRAM_API_ID_2
+      #   sync: false
+      # - key: TELEGRAM_API_HASH_2
+      #   sync: false
+      # - key: TELEGRAM_SESSION_2
       #   sync: false
