@@ -25,11 +25,21 @@ from telethon.tl.types import (
     ChatAdminRights,
     ChannelParticipantCreator,
     ChannelParticipantAdmin,
+    ChatInviteExported,
 )
+from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest, ExportChatInviteRequest
 from telethon.errors import (
     FloodWaitError,
     SlowModeWaitError,
     MessageDeleteForbiddenError,
+    UserAlreadyParticipantError,
+    InviteHashExpiredError,
+    InviteHashInvalidError,
+    ChannelsTooMuchError,
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    UserBannedInChannelError,
 )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -105,6 +115,14 @@ GROUP_COOLDOWN_LOCK = threading.Lock()
 # ─────────────────────────────────────────────────────────────────────
 CLEAR_PREVIOUS_MESSAGES_ON_STARTUP = os.environ.get("CLEAR_PREVIOUS_MESSAGES_ON_STARTUP", "true").strip().lower() in ("1", "true", "yes", "on")
 CLEAR_MESSAGES_SCAN_LIMIT = int(os.environ.get("CLEAR_MESSAGES_SCAN_LIMIT", 100))
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. Cross-Account Group Auto-Join & Synchronization On Startup
+# When enabled, discovers unique groups across all accounts and joins
+# the other accounts to any missing public/joinable groups automatically.
+# ─────────────────────────────────────────────────────────────────────
+AUTO_JOIN_CROSS_ACCOUNT_GROUPS = os.environ.get("AUTO_JOIN_CROSS_ACCOUNT_GROUPS", "true").strip().lower() in ("1", "true", "yes", "on")
+
 
 
 
@@ -831,8 +849,152 @@ class TelegramAccountWorker:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Multi-Account Coordinator & Entry Point
+# Multi-Account Coordinator & Cross-Account Group Auto-Join
 # ─────────────────────────────────────────────────────────────────────
+
+def sync_and_join_cross_account_groups(workers):
+    """
+    On startup, inspects all groups across all active accounts.
+    If an account is in a unique group that other accounts are not in,
+    attempts to automatically join the other accounts to that group
+    (if public username or exportable invite link exists).
+    """
+    if not workers or len(workers) < 2:
+        return
+
+    print("\n" + "=" * 65)
+    print("  [CROSS-ACCOUNT SYNC] Discovering & Synchronizing Groups Across Accounts")
+    print("=" * 65)
+
+    account_groups_map = {}
+    all_unique_groups = {}
+
+    for worker in workers:
+        worker.log("Scanning dialogs for group synchronization...")
+        acc_groups = {}
+        try:
+            with TelegramClient(StringSession(worker.session_str), worker.api_id, worker.api_hash) as client:
+                for dialog in client.iter_dialogs():
+                    if dialog.is_group:
+                        gid = dialog.id
+                        entity = dialog.entity
+                        username = getattr(entity, 'username', None)
+                        title = safe(dialog.name)
+
+                        invite_link = None
+                        if not username:
+                            try:
+                                exported = client(ExportChatInviteRequest(peer=entity))
+                                if isinstance(exported, ChatInviteExported) and exported.link:
+                                    invite_link = exported.link
+                            except Exception:
+                                pass
+
+                        group_info = {
+                            "id": gid,
+                            "title": title,
+                            "username": username,
+                            "invite": invite_link,
+                        }
+                        acc_groups[gid] = group_info
+
+                        if gid not in all_unique_groups:
+                            all_unique_groups[gid] = {
+                                "id": gid,
+                                "title": title,
+                                "username": username,
+                                "invite": invite_link,
+                                "found_in": [],
+                            }
+                        all_unique_groups[gid]["found_in"].append(worker.name)
+                        if username and not all_unique_groups[gid]["username"]:
+                            all_unique_groups[gid]["username"] = username
+                        if invite_link and not all_unique_groups[gid]["invite"]:
+                            all_unique_groups[gid]["invite"] = invite_link
+
+            account_groups_map[worker.acc_id] = acc_groups
+            worker.log(f"Found {len(acc_groups)} group(s).")
+        except Exception as e:
+            worker.log(f"[!] Warning: Could not scan groups for sync: {e}")
+            account_groups_map[worker.acc_id] = {}
+
+    print(f"\n[*] Discovered a total of {len(all_unique_groups)} unique group(s) across all accounts.")
+
+    # Step 2: Auto-join missing groups for each account
+    for worker in workers:
+        existing_gids = set(account_groups_map.get(worker.acc_id, {}).keys())
+        missing_groups = [g for gid, g in all_unique_groups.items() if gid not in existing_gids]
+
+        if not missing_groups:
+            worker.log("Already a member of all discovered groups.")
+            continue
+
+        worker.log(f"Found {len(missing_groups)} group(s) present in other accounts but missing in {worker.name}. Attempting to join...")
+
+        try:
+            with TelegramClient(StringSession(worker.session_str), worker.api_id, worker.api_hash) as client:
+                joined_count = 0
+                for g in missing_groups:
+                    title = g["title"]
+                    username = g["username"]
+                    invite = g["invite"]
+
+                    if username:
+                        try:
+                            client(JoinChannelRequest(username))
+                            joined_count += 1
+                            worker.log(f"  [JOINED] Successfully joined public group '@{username}' ('{title}')")
+                            time.sleep(2.0)
+                        except UserAlreadyParticipantError:
+                            worker.log(f"  [EXISTS] Already participant in '{title}'")
+                        except FloodWaitError as fe:
+                            worker.log(f"  [FLOOD] FloodWait ({fe.seconds}s) when trying to join '{title}'")
+                            if fe.seconds <= 30:
+                                time.sleep(fe.seconds)
+                                try:
+                                    client(JoinChannelRequest(username))
+                                    joined_count += 1
+                                    worker.log(f"  [JOINED] Successfully joined public group '@{username}' ('{title}')")
+                                except Exception:
+                                    pass
+                            else:
+                                break
+                        except Exception as ex:
+                            worker.log(f"  [NOTICE] Could not join '@{username}' ('{title}'): {ex}")
+
+                    elif invite:
+                        invite_hash = None
+                        m = re.search(r"(?:joinchat/|\+)([a-zA-Z0-9_-]+)", invite)
+                        if m:
+                            invite_hash = m.group(1)
+
+                        if invite_hash:
+                            try:
+                                client(ImportChatInviteRequest(invite_hash))
+                                joined_count += 1
+                                worker.log(f"  [JOINED] Successfully joined via invite link '{title}'")
+                                time.sleep(2.0)
+                            except UserAlreadyParticipantError:
+                                worker.log(f"  [EXISTS] Already participant in '{title}'")
+                            except FloodWaitError as fe:
+                                worker.log(f"  [FLOOD] FloodWait ({fe.seconds}s) on invite for '{title}'")
+                                if fe.seconds <= 30:
+                                    time.sleep(fe.seconds)
+                                else:
+                                    break
+                            except Exception as ex:
+                                worker.log(f"  [NOTICE] Could not join '{title}' via invite: {ex}")
+                        else:
+                            worker.log(f"  [SKIP] Private group '{title}' (ID: {g['id']}) - Invalid invite link.")
+                    else:
+                        worker.log(f"  [SKIP] Private group '{title}' (ID: {g['id']}) - No public username/invite link available.")
+
+                worker.log(f"Auto-join complete: Added {joined_count} new group(s) to {worker.name}.")
+        except Exception as e:
+            worker.log(f"[!] Warning: Auto-join error: {e}")
+
+    print("=" * 65 + "\n")
+
 
 def is_account_configured(acc):
     """Check if account has required credentials."""
@@ -842,7 +1004,7 @@ def is_account_configured(acc):
 def main(loop_mode=False):
     """
     Main supervisor:
-    Initializes and runs the 2 main Telegram accounts simultaneously.
+    Initializes and runs the configured Telegram accounts simultaneously.
     Credentials: read from ACCOUNT_CREDENTIALS inside code.
     Campaign settings: read from CONFIG_URL.
     """
@@ -887,6 +1049,18 @@ def main(loop_mode=False):
             sys.exit(1)
         time.sleep(60)
         return
+
+    # Check if cross-account group syncing and auto-joining is enabled
+    auto_join = config.get("auto_join_cross_account_groups") if isinstance(config, dict) else None
+    if auto_join is None:
+        auto_join = AUTO_JOIN_CROSS_ACCOUNT_GROUPS
+    elif isinstance(auto_join, str):
+        auto_join = auto_join.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        auto_join = bool(auto_join)
+
+    if auto_join and len(active_workers) > 1:
+        sync_and_join_cross_account_groups(active_workers)
 
     print(f"\n{'=' * 65}")
     print(f"  [+] LAUNCHING {len(active_workers)} MAIN ACCOUNT(S) SIMULTANEOUSLY")
