@@ -92,6 +92,15 @@ SHARED_GROUP_LAST_SENT: dict[int, tuple[str, float]] = {}  # { gid: (account_nam
 SHARED_GROUP_SENDING: set[int] = set()  # { gid currently in flight }
 GROUP_COOLDOWN_LOCK = threading.Lock()
 
+# ─────────────────────────────────────────────────────────────────────
+# 4. Clear / Unsend Previous Messages On Startup Options
+# When enabled, the script scans and unsends/deletes all previously sent
+# messages from all accounts across all groups before broadcasting starts.
+# ─────────────────────────────────────────────────────────────────────
+CLEAR_PREVIOUS_MESSAGES_ON_STARTUP = os.environ.get("CLEAR_PREVIOUS_MESSAGES_ON_STARTUP", "true").strip().lower() in ("1", "true", "yes", "on")
+CLEAR_MESSAGES_SCAN_LIMIT = int(os.environ.get("CLEAR_MESSAGES_SCAN_LIMIT", 100))
+
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Remote Configuration Loader & Parser
@@ -179,6 +188,20 @@ def parse_account_data(full_config, acc_key):
     rounds = int(acc_block.get("rounds") or (full_config.get("rounds") if isinstance(full_config, dict) else None) or 0)
     targets = acc_block.get("target_groups") or (full_config.get("target_groups") if isinstance(full_config, dict) else None) or "all"
 
+    # Clear / unsend previous messages settings
+    raw_clear = acc_block.get("clear_previous_messages")
+    if raw_clear is None and isinstance(full_config, dict):
+        raw_clear = full_config.get("clear_previous_messages")
+    if raw_clear is None:
+        clear_on_start = CLEAR_PREVIOUS_MESSAGES_ON_STARTUP
+    elif isinstance(raw_clear, str):
+        clear_on_start = raw_clear.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        clear_on_start = bool(raw_clear)
+
+    raw_scan_limit = acc_block.get("clear_messages_scan_limit") or (full_config.get("clear_messages_scan_limit") if isinstance(full_config, dict) else None)
+    scan_limit = int(raw_scan_limit) if raw_scan_limit is not None else CLEAR_MESSAGES_SCAN_LIMIT
+
     return {
         "id": acc_key,
         "key": acc_key,
@@ -191,6 +214,8 @@ def parse_account_data(full_config, acc_key):
         "interval_minutes": interval,
         "rounds": rounds,
         "target_groups": targets,
+        "clear_previous_messages": clear_on_start,
+        "clear_messages_scan_limit": scan_limit,
     }
 
 
@@ -359,6 +384,8 @@ def update_global_status():
 
     if any(s == "broadcasting" for s in states):
         STATUS["state"] = "broadcasting"
+    elif any(s in ("cleaning", "cleaning_messages") for s in states):
+        STATUS["state"] = "cleaning"
     elif any(s in ("starting", "connecting") for s in states):
         STATUS["state"] = "starting"
     elif any(s == "error" for s in states):
@@ -396,6 +423,11 @@ class TelegramAccountWorker:
         self.session_str = acc_data["session"]
         self.acc_data = acc_data
 
+        # Clear / unsend previous messages options
+        self.clear_previous_messages = acc_data.get("clear_previous_messages", CLEAR_PREVIOUS_MESSAGES_ON_STARTUP)
+        self.scan_limit = acc_data.get("clear_messages_scan_limit", CLEAR_MESSAGES_SCAN_LIMIT)
+        self.cleanup_done = False
+
         # Independent message tracking for deletion limits
         self.sent_ids: dict[int, list[int]] = {}
 
@@ -432,6 +464,74 @@ class TelegramAccountWorker:
                 writable.append(dialog)
         self.log(f"Found {len(writable)} writable group(s).")
         return writable
+
+    def clear_all_previous_messages(self, client, groups, me_id):
+        """
+        Unsend / delete all previous messages sent by this account across all groups.
+        Runs on startup before broadcasting begins.
+        """
+        scan_limit = self.scan_limit
+        self.log(f"🧹 [CLEANUP] Scanning up to {scan_limit} recent messages per group to unsend all previous messages...")
+        total_groups = len(groups)
+        total_deleted = 0
+        groups_cleaned = 0
+
+        for idx, dialog in enumerate(groups, 1):
+            gid = dialog.id
+            name = safe(dialog.name)
+            msg_ids = []
+
+            # 1. Primary search: fast filter for messages from 'me' (supported in channels/supergroups)
+            try:
+                for msg in client.iter_messages(gid, from_user="me", limit=scan_limit):
+                    if msg and msg.id:
+                        msg_ids.append(msg.id)
+            except Exception:
+                msg_ids = []
+
+            # 2. Secondary fallback: inspect recent messages for msg.out or matching sender_id
+            if not msg_ids:
+                try:
+                    for msg in client.iter_messages(gid, limit=scan_limit):
+                        if msg and (msg.out or (getattr(msg, "sender_id", None) and msg.sender_id == me_id)):
+                            msg_ids.append(msg.id)
+                except Exception as e:
+                    self.log(f"  [CLEANUP] [{idx}/{total_groups}] Could not read messages in {name}: {e}")
+                    continue
+
+            if msg_ids:
+                unique_ids = list(dict.fromkeys(msg_ids))
+                group_deleted = 0
+
+                for i in range(0, len(unique_ids), 100):
+                    chunk = unique_ids[i:i+100]
+                    try:
+                        client.delete_messages(gid, chunk, revoke=True)
+                        group_deleted += len(chunk)
+                    except MessageDeleteForbiddenError:
+                        self.log(f"  [CLEANUP] [{idx}/{total_groups}] No delete permission in {name}")
+                        break
+                    except FloodWaitError as fe:
+                        wait_s = getattr(fe, 'seconds', 5)
+                        self.log(f"  [CLEANUP] [{idx}/{total_groups}] FloodWait ({wait_s}s) in {name}. Pausing...")
+                        time.sleep(wait_s)
+                        try:
+                            client.delete_messages(gid, chunk, revoke=True)
+                            group_deleted += len(chunk)
+                        except Exception:
+                            pass
+                    except Exception as ex:
+                        self.log(f"  [CLEANUP] [{idx}/{total_groups}] Could not delete msgs in {name}: {ex}")
+
+                if group_deleted > 0:
+                    total_deleted += group_deleted
+                    groups_cleaned += 1
+                    self.log(f"  [CLEANUP] [{idx}/{total_groups}] 🗑️ Unsent {group_deleted} previous message(s) in '{name}'")
+
+            time.sleep(0.1)
+
+        self.log(f"🧹 [CLEANUP COMPLETE] Initial cleanup finished: Unsent {total_deleted} message(s) across {groups_cleaned} group(s).")
+
 
     def send_and_manage(self, client, dialog, message, limit):
         """
@@ -695,6 +795,13 @@ class TelegramAccountWorker:
                             return
                         time.sleep(60)
                         continue
+
+                    # ── Unsend / Clear all previous messages on startup ──
+                    if self.clear_previous_messages and not self.cleanup_done:
+                        self.status["state"] = "cleaning"
+                        update_global_status()
+                        self.clear_all_previous_messages(client, groups, me.id)
+                        self.cleanup_done = True
 
                     self.status["state"] = "broadcasting"
                     update_global_status()

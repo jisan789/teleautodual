@@ -60,11 +60,14 @@ Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast 
 ```
 
 ### Options Available Per Account:
+- **`clear_previous_messages`**: `true` (default: `true`) to automatically scan and unsend/delete all previously sent messages from all groups on startup before starting the broadcast loop.
+- **`clear_messages_scan_limit`**: Maximum recent messages to scan per group during cleanup (default: `100`).
 - **`message`**: The broadcast text or link (supports an array of lines or a single string).
 - **`interval_minutes`**: Interval range between sends (e.g. `"3-5"`).
 - **`message_limit_per_group`**: Maximum messages to retain per group (e.g. `2` to keep last 2 and delete older ones).
 - **`target_groups`**: `"all"` (broadcasts to all groups that account is in) or a list of specific group IDs/names (e.g. `[-1001234567, "Group Title"]`).
 - **`rounds`**: `0` for infinite continuous loop.
+
 
 ---
 

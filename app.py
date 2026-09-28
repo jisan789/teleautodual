@@ -99,6 +99,8 @@ def get_badge_info(state):
     state = (state or "unknown").upper()
     if state in ("BROADCASTING", "RUNNING"):
         return "#10b981", state  # Green
+    elif state in ("CLEANING", "CLEANING_MESSAGES", "UNSENDING"):
+        return "#a855f7", state  # Purple
     elif state in ("STARTING", "CONNECTING", "FETCHING_CONFIG"):
         return "#f59e0b", state  # Amber
     elif state in ("UNCONFIGURED", "IDLE"):
@@ -186,7 +188,7 @@ def get_dashboard_html():
     config_url = STATUS.get("config_url", "")
     accounts_dict = STATUS.get("accounts", {})
 
-    active_accounts_count = sum(1 for a in accounts_dict.values() if a.get("state") in ("broadcasting", "running", "connecting", "starting"))
+    active_accounts_count = sum(1 for a in accounts_dict.values() if a.get("state") in ("broadcasting", "running", "connecting", "starting", "cleaning"))
     total_accounts_count = len(accounts_dict)
 
     account_cards_html = "".join([render_account_card(aid, adata) for aid, adata in accounts_dict.items()])
