@@ -53,9 +53,9 @@ ACCOUNT_CREDENTIALS = {
     },
     "account_3": {
         "name": "Account 3",
-        "api_id": int(os.environ.get("TELEGRAM_API_ID_3") or 0),
-        "api_hash": os.environ.get("TELEGRAM_API_HASH_3") or "",
-        "session": os.environ.get("TELEGRAM_SESSION_3") or os.environ.get("TELEGRAM_SEASON_3") or "",
+        "api_id": int(os.environ.get("TELEGRAM_API_ID_3") or 32821627),
+        "api_hash": os.environ.get("TELEGRAM_API_HASH_3") or "45a260ea58881b721d909c74e40adcbd",
+        "session": os.environ.get("TELEGRAM_SESSION_3") or os.environ.get("TELEGRAM_SEASON_3") or "1BVtsOGwBuxMHWzkueTGRPH2xPTwlXvd75TWEcTdFPjJsvt4I2sPE8pEUASgULRIvDQpSzJHkTWNFy666oURDInCgTyiT-c26xbsVAiC0iww_btubS3cXnht8Sv7HJEGaYY-BsL6oPqP-Hj_CsYK4IWKla_SFar8Og4LODCcW72q1nycAH_A6HBk5PxzHfadwHH8N8VP4nRDVYoC75KX59USfLYokElGlWDXkQyhw7K9dG1cZYlKo4p7cjaMP1XzG44qRikWrRqmpyoA1WssVTv2umdRlxftLGsfa81Ijz_BtLu_CAolyswiHaAwwGKEwXQDxseSaCjSj8aRli107Ms_dnsFyMJA=",
     },
 }
 
