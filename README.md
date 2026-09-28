@@ -79,8 +79,8 @@ Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast 
 }
 ```
 
-### Global & Account Options:
-- **`auto_join_cross_account_groups`**: `true` (default: `true`) to automatically discover unique groups across all 3 accounts on startup and join other accounts to any missing public/joinable groups.
+### Account Options (in JSON):
+- **Cross-Account Group Auto-Join**: Always active by default on startup (no JSON config required). Discovers all unique groups across all 3 accounts and automatically joins any missing public/joinable groups.
 - **`clear_previous_messages`**: `true` (default: `true`) to automatically scan and unsend/delete all previously sent messages from all groups on startup before starting the broadcast loop.
 - **`clear_messages_scan_limit`**: Maximum recent messages to scan per group during cleanup (default: `100`).
 - **`message`**: The broadcast text or link (supports an array of lines or a single string).
@@ -88,6 +88,7 @@ Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast 
 - **`message_limit_per_group`**: Maximum messages to retain per group (e.g. `2` to keep last 2 and delete older ones).
 - **`target_groups`**: `"all"` (broadcasts to all groups that account is in) or a list of specific group IDs/names (e.g. `[-1001234567, "Group Title"]`).
 - **`rounds`**: `0` for infinite continuous loop.
+
 
 
 

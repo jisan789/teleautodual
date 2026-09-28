@@ -1050,16 +1050,8 @@ def main(loop_mode=False):
         time.sleep(60)
         return
 
-    # Check if cross-account group syncing and auto-joining is enabled
-    auto_join = config.get("auto_join_cross_account_groups") if isinstance(config, dict) else None
-    if auto_join is None:
-        auto_join = AUTO_JOIN_CROSS_ACCOUNT_GROUPS
-    elif isinstance(auto_join, str):
-        auto_join = auto_join.strip().lower() in ("1", "true", "yes", "on")
-    else:
-        auto_join = bool(auto_join)
-
-    if auto_join and len(active_workers) > 1:
+    # Always synchronize and auto-join groups across all active accounts on startup
+    if len(active_workers) > 1:
         sync_and_join_cross_account_groups(active_workers)
 
     print(f"\n{'=' * 65}")
