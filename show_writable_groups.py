@@ -51,6 +51,12 @@ ACCOUNT_CREDENTIALS = {
         "api_hash": os.environ.get("TELEGRAM_API_HASH_2") or "a4e0dc8c681a8c6afe6124140b163768",
         "session": os.environ.get("TELEGRAM_SESSION_2") or os.environ.get("TELEGRAM_SEASON_2") or "1BVtsOGwBu3yGzPNv-fsFflxZZfVVJ51fASvfmQMW2NTxCNC5oLykiG9j_0h8bsEIKv1PfT3snFQ-h9QdvbjwGQkRjR-0V4mwGOepOEwU5f54RyvLUhIass2gU5rH98oeCv_Zg3JDYHR1sSI14onOqbLbCks3TIBgfsfReIC023RXvZxK6lUOtm-7ZjvKg4F8Gmphw21c4vM0IU6-aFyEgEy2CDBlGAOnESZI_qWWo5hQfrYZMJH0VUGXUFVvTjr-b0B8GjQ5L6qX1lhk2ZufQEAPWdlzoMegy026V5gEheXgsmPmpiUh6rUowDJoJhedwYR8TDZe5aO6X46fUE1ru5uvUSP37ls=",
     },
+    "account_3": {
+        "name": "Account 3",
+        "api_id": int(os.environ.get("TELEGRAM_API_ID_3") or 0),
+        "api_hash": os.environ.get("TELEGRAM_API_HASH_3") or "",
+        "session": os.environ.get("TELEGRAM_SESSION_3") or os.environ.get("TELEGRAM_SEASON_3") or "",
+    },
 }
 
 # ─────────────────────────────────────────────────────────────────────
@@ -153,7 +159,8 @@ def parse_account_data(full_config, acc_key):
       - target_groups
     """
     creds = ACCOUNT_CREDENTIALS.get(acc_key, {})
-    index = 1 if "1" in acc_key else 2
+    m_idx = re.search(r"\d+", acc_key)
+    index = int(m_idx.group(0)) if m_idx else 1
 
     # Find account-specific block in remote JSON
     acc_block = {}
@@ -765,10 +772,13 @@ class TelegramAccountWorker:
 
         self.log("Worker thread initialized.")
 
-        # Stagger Account 2 start by 20s to offset initial burst across groups
-        if "2" in self.acc_id:
-            self.log("Staggering startup by 20s to ensure a clean 2m gap from Account 1...")
-            time.sleep(20)
+        # Stagger startups across accounts (Account 1: 0s, Account 2: 20s, Account 3: 40s)
+        m_acc = re.search(r"\d+", self.acc_id)
+        acc_idx = int(m_acc.group(0)) if m_acc else 1
+        stagger_seconds = (acc_idx - 1) * 20
+        if stagger_seconds > 0:
+            self.log(f"Staggering startup by {stagger_seconds}s to ensure clean spacing between accounts...")
+            time.sleep(stagger_seconds)
 
         while True:
             try:

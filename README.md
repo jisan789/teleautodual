@@ -2,7 +2,7 @@
 
 Automated Telegram group message broadcast runner using Telethon, engineered to run **24/7 continuously** on Render as a Web Service.
 
-Supports **2 main accounts (Account 1 and Account 2)** running simultaneously in isolated threads with separate rate limits, slowmode timers, message tracking, and target channels.
+Supports **3 main accounts (Account 1, Account 2, and Account 3)** running simultaneously in isolated threads with separate rate limits, slowmode timers, message tracking, and target channels.
 
 **No configurations or credentials are hardcoded in your local code files.** All account credentials and broadcast options are loaded dynamically from your remote `CONFIG_URL` (or environment variables).
 
@@ -10,7 +10,7 @@ Supports **2 main accounts (Account 1 and Account 2)** running simultaneously in
 
 ## Account Credentials (`show_writable_groups.py`)
 
-Credentials for both Account 1 and Account 2 are set inside [`show_writable_groups.py`](file:///c:/Users/Jisan/Desktop/loop/show_writable_groups.py) under `ACCOUNT_CREDENTIALS`:
+Credentials for all 3 accounts are set inside [`show_writable_groups.py`](file:///c:/Users/Jisan/Desktop/loop/show_writable_groups.py) under `ACCOUNT_CREDENTIALS`:
 
 ```python
 ACCOUNT_CREDENTIALS = {
@@ -22,24 +22,32 @@ ACCOUNT_CREDENTIALS = {
     },
     "account_2": {
         "name": "Account 2",
-        "api_id": YOUR_API_ID_2,
-        "api_hash": "YOUR_API_HASH_2",
-        "session": "YOUR_SESSION_KEY_2",
+        "api_id": 33591633,
+        "api_hash": "a4e0dc8c681a8c6afe6124140b163768",
+        "session": "1BVtsOGwBu3yGzPNv-fsFflxZZfVVJ5...",
+    },
+    "account_3": {
+        "name": "Account 3",
+        "api_id": YOUR_API_ID_3,
+        "api_hash": "YOUR_API_HASH_3",
+        "session": "YOUR_SESSION_KEY_3",
     },
 }
 ```
 
 ---
 
-## Remote Broadcast Campaign Configuration (`config.json`)
+## Remote Broadcast Campaign Configuration (`dualconfig.json`)
 
 Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast campaigns without exposing your API credentials:
 
 ```json
 {
   "account_1": {
+    "clear_previous_messages": true,
+    "clear_messages_scan_limit": 100,
     "message": [
-      "https://t.me/+JMmFHaDnyHxlOTE1"
+      "https://t.me/+P06FEzU4xCkyYTc1"
     ],
     "message_limit_per_group": 2,
     "interval_minutes": "3-5",
@@ -47,9 +55,21 @@ Host this JSON at your remote CDN URL (`CONFIG_URL`). It controls the broadcast 
     "target_groups": "all"
   },
   "account_2": {
+    "clear_previous_messages": true,
+    "clear_messages_scan_limit": 100,
     "message": [
-      "🚀 Account 2 Promo Message",
-      "https://t.me/+AnotherChannelLink"
+      "https://t.me/+juCjMCIEZWUzYmJl"
+    ],
+    "message_limit_per_group": 2,
+    "interval_minutes": "3-5",
+    "rounds": 0,
+    "target_groups": "all"
+  },
+  "account_3": {
+    "clear_previous_messages": true,
+    "clear_messages_scan_limit": 100,
+    "message": [
+      "https://t.me/+YourAccount3Link"
     ],
     "message_limit_per_group": 2,
     "interval_minutes": "3-5",
