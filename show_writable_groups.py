@@ -193,19 +193,43 @@ def parse_account_data(full_config, acc_key):
                     acc_block = full_config["accounts"][c]
                     break
 
-    # Message text
-    raw_msg = acc_block.get("message")
-    if isinstance(raw_msg, list):
-        message_str = "\n".join(str(m) for m in raw_msg).strip()
+    # Message text or multiple candidate messages pool
+    raw_messages = acc_block.get("messages") or (full_config.get("messages") if isinstance(full_config, dict) else None)
+    raw_msg = acc_block.get("message") if raw_messages is None else None
+    if raw_msg is None and raw_messages is None and isinstance(full_config, dict):
+        raw_msg = full_config.get("message")
+
+    messages_pool = []
+    if raw_messages is not None:
+        if isinstance(raw_messages, list):
+            for m in raw_messages:
+                if isinstance(m, list):
+                    joined = "\n".join(str(x) for x in m).strip()
+                    if joined:
+                        messages_pool.append(joined)
+                elif m is not None and str(m).strip():
+                    messages_pool.append(str(m).strip())
+        elif str(raw_messages).strip():
+            messages_pool.append(str(raw_messages).strip())
     elif raw_msg is not None:
-        message_str = str(raw_msg).strip()
+        if isinstance(raw_msg, list):
+            for m in raw_msg:
+                if isinstance(m, list):
+                    joined = "\n".join(str(x) for x in m).strip()
+                    if joined:
+                        messages_pool.append(joined)
+                elif m is not None and str(m).strip():
+                    messages_pool.append(str(m).strip())
+        elif str(raw_msg).strip():
+            messages_pool.append(str(raw_msg).strip())
+
+    if not messages_pool:
+        messages_pool = [""]
+
+    if len(messages_pool) > 1:
+        message_str = f"[{len(messages_pool)} Shuffled Msgs] " + " | ".join(f"({i+1}) {m[:35]}..." if len(m) > 35 else f"({i+1}) {m}" for i, m in enumerate(messages_pool))
     else:
-        # Fallback to top-level message if legacy flat JSON
-        top_msg = full_config.get("message", "") if isinstance(full_config, dict) else ""
-        if isinstance(top_msg, list):
-            message_str = "\n".join(str(m) for m in top_msg).strip()
-        else:
-            message_str = str(top_msg).strip()
+        message_str = messages_pool[0]
 
     # Broadcast settings
     interval = str(acc_block.get("interval_minutes") or (full_config.get("interval_minutes") if isinstance(full_config, dict) else None) or "3-5")
@@ -235,6 +259,7 @@ def parse_account_data(full_config, acc_key):
         "api_hash": creds.get("api_hash", ""),
         "session": creds.get("session", ""),
         "message": message_str,
+        "messages_pool": messages_pool,
         "message_limit_per_group": limit,
         "interval_minutes": interval,
         "rounds": rounds,
@@ -448,6 +473,10 @@ class TelegramAccountWorker:
         self.session_str = acc_data["session"]
         self.acc_data = acc_data
 
+        # Candidate messages pool for randomized shuffling
+        self.messages_pool = acc_data.get("messages_pool") or [acc_data.get("message", "")]
+        self._message_deck: list[str] = []
+
         # Clear / unsend previous messages options
         self.clear_previous_messages = acc_data.get("clear_previous_messages", CLEAR_PREVIOUS_MESSAGES_ON_STARTUP)
         self.scan_limit = acc_data.get("clear_messages_scan_limit", CLEAR_MESSAGES_SCAN_LIMIT)
@@ -479,6 +508,22 @@ class TelegramAccountWorker:
     def log(self, text):
         """Log message with this account's distinct prefix."""
         print(f"[{self.name}] {text}")
+
+    def get_next_message(self):
+        """
+        Get next message from the messages pool using a randomized shuffle deck.
+        Ensures all messages in the pool are rotated through in shuffled order.
+        """
+        if not self.messages_pool:
+            return ""
+        if len(self.messages_pool) == 1:
+            return self.messages_pool[0]
+
+        if not self._message_deck:
+            self._message_deck = list(self.messages_pool)
+            random.shuffle(self._message_deck)
+
+        return self._message_deck.pop(0)
 
     def get_writable_groups(self, client):
         """Fetch all groups where this specific account can send messages."""
@@ -616,6 +661,8 @@ class TelegramAccountWorker:
         Uses broadcast campaign options from remote JSON.
         """
         message = self.acc_data.get("message", "")
+        self.messages_pool = self.acc_data.get("messages_pool") or [message]
+        self._message_deck = []
         limit = self.acc_data.get("message_limit_per_group", 0)
         raw_interval = self.acc_data.get("interval_minutes", "3-5")
         rounds = self.acc_data.get("rounds", 0)
@@ -644,7 +691,12 @@ class TelegramAccountWorker:
             self.log(f"    {i}. {safe(d.name)} (ID: {d.id})")
         interval_label = f"{min_min}-{max_min} min" if min_min != max_min else f"{min_min} min"
         self.log(f"Interval: {interval_label} | Deletion Limit: {limit} | Rounds: {rounds if rounds > 0 else 'Infinite'}")
-        self.log(f"Broadcast Text:\n---\n{safe(message)}\n---")
+        if len(self.messages_pool) > 1:
+            self.log(f"Broadcast Mode: Shuffled Rotation ({len(self.messages_pool)} messages in pool):")
+            for idx, m in enumerate(self.messages_pool, 1):
+                self.log(f"    [{idx}] {safe(m)}")
+        else:
+            self.log(f"Broadcast Text:\n---\n{safe(self.messages_pool[0])}\n---")
         self.log("=" * 60)
 
         last_waiting_reported = 0.0
@@ -657,10 +709,12 @@ class TelegramAccountWorker:
             new_acc_data = parse_account_data(active_full_cfg, self.acc_key)
 
             # Check if this account's campaign parameters changed
-            keys_to_check = ["message", "message_limit_per_group", "interval_minutes", "rounds", "target_groups"]
+            keys_to_check = ["messages_pool", "message", "message_limit_per_group", "interval_minutes", "rounds", "target_groups"]
             if any(new_acc_data.get(k) != self.acc_data.get(k) for k in keys_to_check):
                 self.log("[+] Detected update to this account's broadcast config in remote JSON!")
                 self.acc_data = new_acc_data
+                self.messages_pool = self.acc_data.get("messages_pool") or [self.acc_data.get("message", "")]
+                self._message_deck = []
                 message = self.acc_data.get("message", "")
                 limit = self.acc_data.get("message_limit_per_group", 0)
                 raw_interval = self.acc_data.get("interval_minutes", "3-5")
@@ -679,7 +733,7 @@ class TelegramAccountWorker:
                         next_eligible_time[d.id] = 0.0
                         is_large_hold[d.id] = False
                         send_count[d.id] = 0
-                self.log(f"[+] Applied new message & interval ({raw_interval} min).")
+                self.log(f"[+] Applied new message pool ({len(self.messages_pool)} messages) & interval ({raw_interval} min).")
 
             # Find groups eligible to send NOW
             ready_groups = [d for d in target if now >= next_eligible_time.get(d.id, 0.0)]
@@ -716,9 +770,10 @@ class TelegramAccountWorker:
 
                     chosen_min = random.uniform(min_min, max_min)
                     normal_interval_sec = chosen_min * 60
+                    chosen_msg = self.get_next_message()
 
                     try:
-                        status, wait_seconds = self.send_and_manage(client, d, message, limit)
+                        status, wait_seconds = self.send_and_manage(client, d, chosen_msg, limit)
                         send_time = time.time()
                     finally:
                         with GROUP_COOLDOWN_LOCK:
